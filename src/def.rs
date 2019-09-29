@@ -12,9 +12,7 @@ pub struct Stack<T> {
 
 impl<T> Stack<T> {
     pub fn new() -> Stack<T> {
-        Stack {
-            inner: Vec::new(),
-        }
+        Stack { inner: Vec::new() }
     }
 
     pub fn push(&mut self, value: T) {
@@ -39,8 +37,8 @@ pub struct WeightTable<T> {
     inner: HashMap<T, f64>,
 }
 
-pub trait Hashable : std::hash::Hash + std::cmp::Eq { }
-impl<T: std::hash::Hash + std::cmp::Eq> Hashable for T { }
+pub trait Hashable: std::hash::Hash + std::cmp::Eq {}
+impl<T: std::hash::Hash + std::cmp::Eq> Hashable for T {}
 
 impl WeightTable<char> {
     pub fn print(&self) {
@@ -51,7 +49,7 @@ impl WeightTable<char> {
 impl<T: Hashable + Copy> WeightTable<T> {
     pub fn new() -> WeightTable<T> {
         WeightTable {
-            inner: HashMap::new()
+            inner: HashMap::new(),
         }
     }
 
@@ -81,11 +79,6 @@ impl<T: Hashable + Copy> WeightTable<T> {
         }
         set
     }
-
-    pub fn insert(&mut self, value: T, weight: f64) {
-        let current_weight = self.inner.entry(value).or_insert(0f64);
-        *current_weight += weight;
-    }
 }
 
 pub type CompatibilityMap = HashMap<char, HashSet<CompatibleTile>>;
@@ -97,9 +90,7 @@ pub struct Oracle {
 
 impl Oracle {
     pub fn new(compatibilites: CompatibilityMap) -> Oracle {
-        Oracle {
-            compatibilites,
-        }
+        Oracle { compatibilites }
     }
 
     pub fn check(&self, tile: char, other_tile: char, direction: Vec2) -> bool {
@@ -162,8 +153,7 @@ impl Wavefunction {
         let tiles = self.possible_tiles(coords);
         if tiles.len() > 1 {
             return &'~';
-        }
-        else {
+        } else {
             tiles.iter().next().unwrap()
         }
     }
@@ -186,21 +176,25 @@ impl Wavefunction {
             .iter()
             .flat_map(|x| x.iter())
             .filter(|x| x.len() > 1)
-            .count() == 0
+            .count()
+            == 0
     }
 
     // Collapses the wavefunction at the given coordinates
     pub fn collapse(&mut self, coords: UVec2, rng: &mut Box<dyn RngCore>) {
         let options = &self.coefficients[coords.0][coords.1];
-        let valid_weights: Vec<(&char, f64)> = options.iter().filter_map(|item| {
-            if self.weights.contains(item) {
-                Some((item, self.weights.get(item)))
-            } else {
-                None
-            }
-        }).collect();
+        let valid_weights: Vec<(&char, f64)> = options
+            .iter()
+            .filter_map(|item| {
+                if self.weights.contains(item) {
+                    Some((item, self.weights.get(item)))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-        let total_weights:f64 = valid_weights.iter().map(|i| i.1).sum();
+        let total_weights: f64 = valid_weights.iter().map(|i| i.1).sum();
 
         let mut rnd = total_weights * rng.gen::<f64>();
         let mut chosen = None;
@@ -244,10 +238,10 @@ impl Model {
 
     pub fn run(&mut self) {
         let mut iteration_count = 0;
-        while !self.iterate() {
+        while self.iterate() {
             iteration_count += 1;
         }
-        println!("DONE!");
+        println!("Done! Generation took {} iterations!", iteration_count);
     }
 
     pub fn iterate(&mut self) -> bool {
@@ -270,17 +264,21 @@ impl Model {
         self.stack.push(coords);
 
         let mut to_ban = VecDeque::with_capacity(4);
-        
+
         while let Some(coords) = self.stack.pop() {
             let current_possible_tiles = self.wavefunction.possible_tiles(coords);
 
             for direction in valid_dirs(coords, self.size) {
-                let other_coords = UVec2(((coords.0 as isize) + direction.0) as usize, ((coords.1 as isize) + direction.1) as usize);
+                let other_coords = UVec2(
+                    ((coords.0 as isize) + direction.0) as usize,
+                    ((coords.1 as isize) + direction.1) as usize,
+                );
 
                 for other_tile in self.wavefunction.possible_tiles(other_coords) {
-                    let other_tile_is_possible = current_possible_tiles
-                        .iter()
-                        .any(|current_tile| self.oracle.check(*current_tile, *other_tile, direction));
+                    let other_tile_is_possible =
+                        current_possible_tiles.iter().any(|current_tile| {
+                            self.oracle.check(*current_tile, *other_tile, direction)
+                        });
 
                     if !other_tile_is_possible {
                         to_ban.push_front((other_coords, *other_tile));
@@ -308,7 +306,7 @@ impl Model {
 
                 let entropy = self.wavefunction.shannon_entropy(coords);
                 let entropy_plus_noise = entropy - self.rng.gen::<f64>();
-                if entropy_plus_noise < min_entropy  {
+                if entropy_plus_noise < min_entropy {
                     min_entropy = entropy_plus_noise;
                     min_entropy_coords = Some(coords);
                 }
@@ -319,17 +317,17 @@ impl Model {
     }
 }
 
-const UP: Vec2      = Vec2(0, 1);
-const LEFT: Vec2    = Vec2(-1, 0);
-const DOWN: Vec2    = Vec2(0, -1);
-const RIGHT: Vec2   = Vec2(1, 0);
+const UP: Vec2 = Vec2(0, 1);
+const LEFT: Vec2 = Vec2(-1, 0);
+const DOWN: Vec2 = Vec2(0, -1);
+const RIGHT: Vec2 = Vec2(1, 0);
 const DIRS: [Vec2; 4] = [UP, DOWN, LEFT, RIGHT];
 
 pub fn valid_dirs(coords: UVec2, size: UVec2) -> Vec<Vec2> {
     let mut dirs = Vec::new();
     let (x, y) = (coords.0, coords.1);
     let (width, height) = (size.0, size.1);
-    
+
     if x > 0 {
         dirs.push(LEFT);
     }

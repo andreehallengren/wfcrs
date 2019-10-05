@@ -41,26 +41,12 @@ fn print_matrix(matrix: &Matrix) {
 }
 
 fn main() {
-    let size = UVec2(MATRIX_WIDTH, MATRIX_HEIGHT);
-
-    // print_matrix(&INPUT_MATRIX);
-    // println!();
-    // print_matrix(&INPUT_MATRIX_2);
-    // println!();
+    let output_size = UVec2(15, 15);
 
     let (compats, weights) = estm::provide(&[INPUT_MATRIX, INPUT_MATRIX_2]);
-    // weights.print();
     let oracle = Oracle::new(compats);
-    let wavefunction = Wavefunction::new(size, weights);
+    let wavefunction = Wavefunction::new(output_size, weights);
     let mut model = Model::new(wavefunction, oracle);
-
-    // let mut iter_count = 0;
-    // while model.iterate() {
-    //     println!("Iteration: {}", iter_count);
-    //     model.print();
-    //     iter_count += 1;
-    //     println!();
-    // }
 
     model.run();
     println!();

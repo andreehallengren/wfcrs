@@ -102,18 +102,97 @@ impl Oracle {
     }
 }
 
-type Coefficients = Vec<Vec<HashSet<char>>>;
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum WavepointState {
+    Uncollapsed,
+    Collapsed,
+}
+
+#[derive(Clone, Debug)]
+struct Wavepoint<T: Hashable>
+{
+    variants: HashSet<T>,
+    state: WavepointState,
+}
+
+impl<T: Hashable> Wavepoint<T> {
+    pub fn new(value: HashSet<T>) -> Wavepoint<T> {
+        Wavepoint {
+            variants: value,
+            state: WavepointState::Uncollapsed,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.variants.len()
+    }
+
+    pub fn variants(&self) -> &HashSet<T> {
+        &self.variants
+    }
+
+    pub fn remove_variant(&mut self, value: &T) {
+        assert!(self.variants.len() > 1);
+        self.variants.remove(value);
+    }
+
+    pub fn collapse(&mut self, value: T) {
+        assert_ne!(self.state, WavepointState::Collapsed);
+        self.variants.clear();
+        self.variants.insert(value);
+        self.state = WavepointState::Collapsed;
+    }
+
+    pub fn is_collapsed(&self) -> bool {
+        match self.state {
+            WavepointState::Uncollapsed => false,
+            WavepointState::Collapsed => true,
+        }
+    }
+
+    pub fn get_value(&self) -> &T {
+        assert_eq!(self.state, WavepointState::Collapsed);
+        self.iter().next().unwrap()
+    }
+
+    pub fn iter(&self) -> impl std::iter::Iterator<Item = &'_ T> {
+        self.variants.iter()
+    }
+}
+
+use ndarray::Array;
+use ndarray::Array2;
+use ndarray::ArrayView2;
 
 pub struct Wavefunction {
     size: UVec2,
     weights: WeightTable<char>,
-    coefficients: Vec<Vec<HashSet<char>>>,
+    coefficients: Array2<Wavepoint<char>>,
+}
+
+impl std::fmt::Display for Wavefunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (width, height) = (self.size.0, self.size.1);
+
+        for row in 0..height {
+            for col in 0..width {
+                let wavepoint = &self.coefficients[[col, row]];
+                if wavepoint.is_collapsed() {
+                    write!(f, "[{}]", wavepoint.get_value())?;
+                } else {
+                    write!(f, "[~]")?;
+                }
+            }
+            write!(f, "\n")?;
+        }
+        std::fmt::Result::Ok(())
+    }
 }
 
 impl Wavefunction {
     pub fn new(size: UVec2, weights: WeightTable<char>) -> Wavefunction {
         let coefficients = Wavefunction::derive_coefficients(size, weights.kinds());
-
+        
         Wavefunction {
             size,
             weights,
@@ -121,48 +200,19 @@ impl Wavefunction {
         }
     }
 
-    fn derive_coefficients(size: UVec2, kinds: HashSet<char>) -> Coefficients {
-        let mut coefficients = vec!(vec!(HashSet::<char>::new(); size.1); size.0);
-
-        for x in 0..size.0 {
-            for y in 0..size.1 {
-                coefficients[x][y] = kinds.clone();
-            }
-        }
-
-        coefficients
+    fn derive_coefficients(size: UVec2, kinds: HashSet<char>) -> Array2<Wavepoint<char>> {
+        Array::from_elem((size.0, size.1), Wavepoint::new(kinds.clone()))
     }
 
     pub fn possible_tiles(&self, coords: UVec2) -> &HashSet<char> {
-        &self.coefficients[coords.0][coords.1]
-    }
-
-    pub fn get_all_potentially_collapsed(&self) -> Matrix {
-        let mut matrix: Matrix = [['o'; 4]; 7];
-
-        for x in 0..self.size.0 {
-            for y in 0..self.size.1 {
-                matrix[y][x] = *self.get_potentially_collapsed(UVec2(x, y));
-            }
-        }
-
-        matrix
-    }
-
-    pub fn get_potentially_collapsed(&self, coords: UVec2) -> &char {
-        let tiles = self.possible_tiles(coords);
-        if tiles.len() > 1 {
-            return &'~';
-        } else {
-            tiles.iter().next().unwrap()
-        }
+        self.coefficients[[coords.0, coords.1]].variants()
     }
 
     pub fn shannon_entropy(&self, coords: UVec2) -> f64 {
         let mut sum_of_weights = 0f64;
         let mut sum_of_weights_log_weights = 0f64;
 
-        for option in self.coefficients[coords.0][coords.1].iter() {
+        for option in self.coefficients[[coords.0, coords.1]].iter() {
             let weight = self.weights.get(option);
             sum_of_weights += weight;
             sum_of_weights_log_weights += weight * weight.ln();
@@ -174,15 +224,12 @@ impl Wavefunction {
     pub fn is_fully_collapsed(&self) -> bool {
         self.coefficients
             .iter()
-            .flat_map(|x| x.iter())
-            .filter(|x| x.len() > 1)
-            .count()
-            == 0
+            .filter(|x| !x.is_collapsed())
+            .count() == 0
     }
 
-    // Collapses the wavefunction at the given coordinates
-    pub fn collapse(&mut self, coords: UVec2, rng: &mut Box<dyn RngCore>) {
-        let options = &self.coefficients[coords.0][coords.1];
+    fn get_collapse_state(&self, coords: UVec2, rng: &mut Box<dyn RngCore>) -> Option<&char> {
+        let options = &self.coefficients[[coords.0, coords.1]];
         let valid_weights: Vec<(&char, f64)> = options
             .iter()
             .filter_map(|item| {
@@ -206,14 +253,18 @@ impl Wavefunction {
             }
         }
 
-        let mut set = HashSet::new();
-        set.insert(*chosen.unwrap());
-        self.coefficients[coords.0][coords.1] = set;
+        chosen
+    }
+
+    // Collapses the wavefunction at the given coordinates
+    pub fn collapse(&mut self, coords: UVec2, rng: &mut Box<dyn RngCore>) {
+        let collapsed_state = *self.get_collapse_state(coords, rng).unwrap();
+        self.coefficients[[coords.0, coords.1]].collapse(collapsed_state);
     }
 
     // Removed 'tile' from the list of possible tiles at 'coords'
     pub fn ban(&mut self, coords: UVec2, tile: char) {
-        self.coefficients[coords.0][coords.1].remove(&tile);
+        self.coefficients[[coords.0, coords.1]].remove_variant(&tile);
     }
 }
 
@@ -239,25 +290,29 @@ impl Model {
     pub fn run(&mut self) {
         let mut iteration_count = 0;
         while self.iterate() {
+            println!("{}", self.wavefunction);
             iteration_count += 1;
         }
         println!("Done! Generation took {} iterations!", iteration_count);
     }
 
     pub fn iterate(&mut self) -> bool {
+        // for point in self.wavefunction.coefficients.iter() {
+        //     println!("{:?}", point)
+        // }
+
         if self.wavefunction.is_fully_collapsed() {
             return false;
         }
 
-        let coords = self.min_entropy_coords().unwrap();
+        let coords = self.min_entropy_coords();
         self.wavefunction.collapse(coords, &mut self.rng);
         self.propagate(coords);
         true
     }
 
     pub fn print(&self) {
-        let result = self.wavefunction.get_all_potentially_collapsed();
-        crate::print_matrix(&result);
+        println!("{}", self.wavefunction);
     }
 
     fn propagate(&mut self, coords: UVec2) {
@@ -293,14 +348,14 @@ impl Model {
         }
     }
 
-    fn min_entropy_coords(&mut self) -> Option<UVec2> {
+    fn min_entropy_coords(&mut self) -> UVec2 {
         let mut min_entropy = std::f64::MAX;
         let mut min_entropy_coords = None;
 
         for x in 0..self.size.0 {
             for y in 0..self.size.1 {
                 let coords = UVec2(x, y);
-                if self.wavefunction.possible_tiles(coords).len() == 1 {
+                if self.wavefunction.coefficients[[coords.0, coords.1]].is_collapsed() {
                     continue;
                 }
 
@@ -313,7 +368,7 @@ impl Model {
             }
         }
 
-        min_entropy_coords
+        min_entropy_coords.unwrap()
     }
 }
 
@@ -321,7 +376,6 @@ const UP: Vec2 = Vec2(0, 1);
 const LEFT: Vec2 = Vec2(-1, 0);
 const DOWN: Vec2 = Vec2(0, -1);
 const RIGHT: Vec2 = Vec2(1, 0);
-const DIRS: [Vec2; 4] = [UP, DOWN, LEFT, RIGHT];
 
 pub fn valid_dirs(coords: UVec2, size: UVec2) -> Vec<Vec2> {
     let mut dirs = Vec::new();

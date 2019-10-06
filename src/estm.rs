@@ -11,7 +11,7 @@ use crate::Matrix;
 fn parse_matrix(
     matrix: &Matrix,
     weights: &mut WeightTable<char>,
-    compatabilities: &mut CompatibilityMap,
+    compatabilities: &mut CompatibilityMap<char>,
 ) {
     let matrix_height = matrix.len();
     let matrix_width = matrix[0].len();
@@ -28,7 +28,7 @@ fn parse_matrix(
 
                 let compats = compatabilities
                     .entry(*col)
-                    .or_insert(HashSet::<CompatibleTile>::new());
+                    .or_insert(HashSet::<CompatibleTile<char>>::new());
 
                 compats.insert((other_tile, direction));
             }
@@ -36,7 +36,7 @@ fn parse_matrix(
     }
 }
 
-pub fn provide(matrixes: &[Matrix]) -> (CompatibilityMap, WeightTable<char>) {
+pub fn provide(matrixes: &[Matrix]) -> (CompatibilityMap<char>, WeightTable<char>) {
     let mut weights = WeightTable::new();
     let mut compatabilities = HashMap::new();
 

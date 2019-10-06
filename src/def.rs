@@ -2,8 +2,11 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
-use crate::Matrix;
+use std::hash::Hash;
+use std::cmp::Eq;
 
+use ndarray::Array;
+use ndarray::Array2;
 use rand::prelude::*;
 
 pub struct Stack<T> {
@@ -37,8 +40,8 @@ pub struct WeightTable<T> {
     inner: HashMap<T, f64>,
 }
 
-pub trait Hashable: std::hash::Hash + std::cmp::Eq {}
-impl<T: std::hash::Hash + std::cmp::Eq> Hashable for T {}
+pub trait Hashable: Hash + Eq {}
+impl<T: Hash + Eq> Hashable for T {}
 
 impl WeightTable<char> {
     pub fn print(&self) {
@@ -75,25 +78,25 @@ impl<T: Hashable + Copy> WeightTable<T> {
     pub fn kinds(&self) -> HashSet<T> {
         let mut set = HashSet::new();
         for key in self.inner.keys() {
-            set.insert(*key);
+            set.insert(key.clone());
         }
         set
     }
 }
 
-pub type CompatibilityMap = HashMap<char, HashSet<CompatibleTile>>;
-pub type CompatibleTile = (char, Vec2);
+pub type CompatibilityMap<T> = HashMap<T, HashSet<CompatibleTile<T>>>;
+pub type CompatibleTile<T> = (T, Vec2);
 
-pub struct Oracle {
-    compatibilites: CompatibilityMap,
+pub struct Oracle<T> {
+    compatibilites: CompatibilityMap<T>,
 }
 
-impl Oracle {
-    pub fn new(compatibilites: CompatibilityMap) -> Oracle {
+impl<T: Hashable> Oracle<T> {
+    pub fn new(compatibilites: CompatibilityMap<T>) -> Oracle<T> {
         Oracle { compatibilites }
     }
 
-    pub fn check(&self, tile: char, other_tile: char, direction: Vec2) -> bool {
+    pub fn check(&self, tile: T, other_tile: T, direction: Vec2) -> bool {
         if self.compatibilites.contains_key(&tile) {
             let tiles = self.compatibilites.get(&tile).unwrap();
             return tiles.contains(&(other_tile, direction));
@@ -160,17 +163,22 @@ impl<T: Hashable> Wavepoint<T> {
     }
 }
 
-use ndarray::Array;
-use ndarray::Array2;
-use ndarray::ArrayView2;
-
-pub struct Wavefunction {
+pub struct Wavefunction<T: Hashable> {
     size: UVec2,
-    weights: WeightTable<char>,
-    coefficients: Array2<Wavepoint<char>>,
+    weights: WeightTable<T>,
+    coefficients: Array2<Wavepoint<T>>,
 }
 
-impl std::fmt::Display for Wavefunction {
+macro_rules! write_point {
+    ($f: ident, $color:ident, $value:ident) => 
+    {
+        write!($f, "{}[{}{}]{}", termion::style::Bold, Fg($color), $value, termion::style::Reset)?;
+    }
+}
+
+use termion::color::*;
+
+impl std::fmt::Display for Wavefunction<char> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (width, height) = (self.size.0, self.size.1);
 
@@ -178,9 +186,27 @@ impl std::fmt::Display for Wavefunction {
             for col in 0..width {
                 let wavepoint = &self.coefficients[[col, row]];
                 if wavepoint.is_collapsed() {
-                    write!(f, "[{}]", wavepoint.get_value())?;
+                    let value = wavepoint.get_value();
+                    match wavepoint.get_value() {
+                        'L' => { 
+                            write_point!(f, LightGreen, value);
+                        }
+                        'S' =>  { 
+                            write_point!(f, LightBlue, value);
+                        }
+                        'C' =>  { 
+                            write_point!(f, LightYellow, value);
+                        }
+                        'A' =>  { 
+                            write_point!(f, LightCyan, value);
+                        }
+                        'B' =>  { 
+                            write_point!(f, LightMagenta, value);
+                        }
+                        _ => { }
+                    }
                 } else {
-                    write!(f, "[~]")?;
+                    write!(f, "{}[{}]{}", Fg(White), wavepoint.len(), termion::style::Reset)?;
                 }
             }
             write!(f, "\n")?;
@@ -189,8 +215,8 @@ impl std::fmt::Display for Wavefunction {
     }
 }
 
-impl Wavefunction {
-    pub fn new(size: UVec2, weights: WeightTable<char>) -> Wavefunction {
+impl<T: Hashable + Copy> Wavefunction<T> {
+    pub fn new(size: UVec2, weights: WeightTable<T>) -> Wavefunction<T> {
         let coefficients = Wavefunction::derive_coefficients(size, weights.kinds());
         
         Wavefunction {
@@ -200,11 +226,11 @@ impl Wavefunction {
         }
     }
 
-    fn derive_coefficients(size: UVec2, kinds: HashSet<char>) -> Array2<Wavepoint<char>> {
+    fn derive_coefficients(size: UVec2, kinds: HashSet<T>) -> Array2<Wavepoint<T>> {
         Array::from_elem((size.0, size.1), Wavepoint::new(kinds.clone()))
     }
 
-    pub fn possible_tiles(&self, coords: UVec2) -> &HashSet<char> {
+    pub fn possible_tiles(&self, coords: UVec2) -> &HashSet<T> {
         self.coefficients[[coords.0, coords.1]].variants()
     }
 
@@ -228,9 +254,9 @@ impl Wavefunction {
             .count() == 0
     }
 
-    fn get_collapse_state(&self, coords: UVec2, rng: &mut Box<dyn RngCore>) -> Option<&char> {
+    fn get_collapse_state(&self, coords: UVec2, rng: &mut Box<dyn RngCore>) -> Option<&T> {
         let options = &self.coefficients[[coords.0, coords.1]];
-        let valid_weights: Vec<(&char, f64)> = options
+        let valid_weights: Vec<(&T, f64)> = options
             .iter()
             .filter_map(|item| {
                 if self.weights.contains(item) {
@@ -263,21 +289,21 @@ impl Wavefunction {
     }
 
     // Removed 'tile' from the list of possible tiles at 'coords'
-    pub fn ban(&mut self, coords: UVec2, tile: char) {
+    pub fn ban(&mut self, coords: UVec2, tile: T) {
         self.coefficients[[coords.0, coords.1]].remove_variant(&tile);
     }
 }
 
-pub struct Model {
+pub struct Model<T: Hashable> {
     size: UVec2,
-    wavefunction: Wavefunction,
+    wavefunction: Wavefunction<T>,
     stack: Stack<UVec2>,
     rng: Box<dyn RngCore>,
-    oracle: Oracle,
+    oracle: Oracle<T>,
 }
 
-impl Model {
-    pub fn new(wavefunction: Wavefunction, oracle: Oracle) -> Model {
+impl<T: Hashable + Copy> Model<T> {
+    pub fn new(wavefunction: Wavefunction<T>, oracle: Oracle<T>) -> Model<T> {
         Model {
             size: wavefunction.size,
             wavefunction,
@@ -288,12 +314,18 @@ impl Model {
     }
 
     pub fn run(&mut self) {
+        while self.iterate() { }
+    }
+
+    pub fn run_with_callback<F: Fn(&Self, u32)>(&mut self, func: F) {
         let mut iteration_count = 0;
-        while self.iterate() {
-            println!("{}", self.wavefunction);
+        loop {
+            func(&self, iteration_count);
+            if !self.iterate() {
+                break;
+            }
             iteration_count += 1;
         }
-        println!("Done! Generation took {} iterations!", iteration_count);
     }
 
     pub fn iterate(&mut self) -> bool {
@@ -312,7 +344,7 @@ impl Model {
     }
 
     pub fn print(&self) {
-        println!("{}", self.wavefunction);
+        // println!("{}", self.wavefunction);
     }
 
     fn propagate(&mut self, coords: UVec2) {

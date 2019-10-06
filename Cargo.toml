@@ -7,9 +7,13 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rand = "0.7.2"
+# rand = "0.7.2"
 ndarray = "0.13.0"
 termion = "1.5.3"
+
+[dependencies.rand]
+version = "0.7.2"
+features = ["small_rng"]
 
 [profile.release]
 debug = true

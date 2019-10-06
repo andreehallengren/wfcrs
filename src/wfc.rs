@@ -7,7 +7,9 @@ use std::cmp::Eq;
 
 use ndarray::Array;
 use ndarray::Array2;
+
 use rand::prelude::*;
+use rand::rngs::SmallRng;
 
 pub struct Stack<T> {
     inner: Vec<T>,
@@ -48,6 +50,10 @@ impl<T: Hashable + Copy> WeightTable<T> {
         WeightTable {
             inner: HashMap::new(),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
     }
 
     pub fn normalize(&mut self) {
@@ -139,16 +145,33 @@ impl<T: Hashable> Wavepoint<T> {
     }
 }
 
+struct EntropyTable<T> {
+    entropies: Array2<f64>,
+    weight_log_weights: HashMap<T, f64>,
+    sum_of_weights: f64,
+    sum_of_weights_log_weights: f64,
+    sums_of_weights: Array2<f64>,
+    sums_of_weights_log_weights: Array2<f64>,
+}
+
 pub struct Wavefunction<T: Hashable> {
     size: UVec2,
     weights: WeightTable<T>,
     coefficients: Array2<Wavepoint<T>>,
+    entropy_table: EntropyTable<T>,
+}
+
+macro_rules! write_entropy {
+    ($f: ident, $color:ident, $value:ident) => 
+    {
+        write!($f, "{}[{}{:.2}]{}", termion::style::Bold, Fg($color), $value, termion::style::Reset)?;
+    }
 }
 
 macro_rules! write_point {
     ($f: ident, $color:ident, $value:ident) => 
     {
-        write!($f, "{}[{}{}]{}", termion::style::Bold, Fg($color), $value, termion::style::Reset)?;
+        write!($f, "{}{}[{}]{}", termion::style::Bold, Fg($color), $value, termion::style::Reset)?;
     }
 }
 
@@ -160,7 +183,14 @@ impl std::fmt::Display for Wavefunction<char> {
 
         for row in 0..height {
             for col in 0..width {
-                let wavepoint = &self.coefficients[[col, row]];
+                let wavepoint = &self.coefficients[[row, col]];
+                // let entropy = self.entropy_table.entropies[[col, row]];
+                // if wavepoint.is_collapsed() {
+                //     write_entropy!(f, White, entropy);
+                // } 
+                // else {
+                //     write_entropy!(f, LightBlue, entropy);
+                // }
                 if wavepoint.is_collapsed() {
                     let value = wavepoint.get_value();
                     match wavepoint.get_value() {
@@ -193,34 +223,55 @@ impl std::fmt::Display for Wavefunction<char> {
 
 impl<T: Hashable + Copy> Wavefunction<T> {
     pub fn new(size: UVec2, weights: WeightTable<T>) -> Wavefunction<T> {
-        let coefficients = Wavefunction::derive_coefficients(size, weights.kinds());
-        
+        let coefficients = Wavefunction::derive_coefficients(size, &weights.kinds());
+        let entropies = Wavefunction::derive_entopy_table(size, &coefficients, &weights);
+
         Wavefunction {
             size,
             weights,
             coefficients,
+            entropy_table: entropies,
         }
     }
 
-    fn derive_coefficients(size: UVec2, kinds: HashSet<T>) -> Array2<Wavepoint<T>> {
+    fn derive_coefficients(size: UVec2, kinds: &HashSet<T>) -> Array2<Wavepoint<T>> {
         Array::from_elem((size.0, size.1), Wavepoint::new(kinds.clone()))
+    }
+
+    fn derive_entopy_table(size: UVec2, coefficients: &Array2<Wavepoint<T>>, weights: &WeightTable<T>) -> EntropyTable<T> {
+        let mut weight_log_weights = HashMap::new();// Vec::with_capacity(weights.len());
+
+        let mut sum_of_weights = 0f64;
+        let mut sum_of_weights_log_weights = 0f64;
+
+        for (index, variant) in weights.kinds().iter().enumerate() {
+            let weight = weights.get(&variant);
+            let wlw = weight * weight.ln();
+
+            sum_of_weights += weight;
+            sum_of_weights_log_weights += wlw;
+
+            weight_log_weights.insert(*variant, wlw);
+        }
+
+        let initial_entropy = sum_of_weights.ln() - (sum_of_weights_log_weights / sum_of_weights);
+
+        let entropies = Array::from_elem((size.0, size.1), initial_entropy);
+        let sums_of_weights = Array::from_elem((size.0, size.1), sum_of_weights);
+        let sums_of_weights_log_weights = Array::from_elem((size.0, size.1), sum_of_weights_log_weights);
+
+        EntropyTable {
+            entropies,
+            weight_log_weights,
+            sum_of_weights,
+            sum_of_weights_log_weights,
+            sums_of_weights,
+            sums_of_weights_log_weights
+        }
     }
 
     pub fn possible_tiles(&self, coords: UVec2) -> &HashSet<T> {
         self.coefficients[[coords.0, coords.1]].variants()
-    }
-
-    pub fn shannon_entropy(&self, coords: UVec2) -> f64 {
-        let mut sum_of_weights = 0f64;
-        let mut sum_of_weights_log_weights = 0f64;
-
-        for option in self.coefficients[[coords.0, coords.1]].iter() {
-            let weight = self.weights.get(option);
-            sum_of_weights += weight;
-            sum_of_weights_log_weights += weight * weight.ln();
-        }
-
-        sum_of_weights.ln() - (sum_of_weights_log_weights / sum_of_weights)
     }
 
     pub fn is_fully_collapsed(&self) -> bool {
@@ -230,7 +281,7 @@ impl<T: Hashable + Copy> Wavefunction<T> {
             .count() == 0
     }
 
-    fn get_collapse_state(&self, coords: UVec2, rng: &mut Box<dyn RngCore>) -> Option<&T> {
+    fn get_collapse_state(&self, coords: UVec2, rng: &mut SmallRng) -> Option<&T> {
         let options = &self.coefficients[[coords.0, coords.1]];
         let valid_weights: Vec<(&T, f64)> = options
             .iter()
@@ -259,13 +310,23 @@ impl<T: Hashable + Copy> Wavefunction<T> {
     }
 
     // Collapses the wavefunction at the given coordinates
-    pub fn collapse(&mut self, coords: UVec2, rng: &mut Box<dyn RngCore>) {
+    pub fn collapse(&mut self, coords: UVec2, rng: &mut SmallRng) {
         let collapsed_state = *self.get_collapse_state(coords, rng).unwrap();
         self.coefficients[[coords.0, coords.1]].collapse(collapsed_state);
     }
 
     // Removed 'tile' from the list of possible tiles at 'coords'
     pub fn ban(&mut self, coords: UVec2, tile: T) {
+        let weight = self.weights.get(&tile);
+        self.entropy_table.sums_of_weights[[coords.0, coords.1]] -= weight;
+
+        let wlw = self.entropy_table.weight_log_weights[&tile];
+        self.entropy_table.sums_of_weights_log_weights[[coords.0, coords.1]] -= wlw;
+
+        let sum = self.weights.get(&tile);
+        let sum_of_wlw = self.entropy_table.sums_of_weights_log_weights[[coords.0, coords.1]];
+        self.entropy_table.entropies[[coords.0, coords.1]] = sum.ln() - sum_of_wlw / sum;
+
         self.coefficients[[coords.0, coords.1]].remove_variant(&tile);
     }
 }
@@ -274,17 +335,23 @@ pub struct Model<T: Hashable> {
     size: UVec2,
     wavefunction: Wavefunction<T>,
     stack: Stack<UVec2>,
-    rng: Box<dyn RngCore>,
+    rng: SmallRng,
     compatibilities: CompatibilityMap<T>,
 }
 
+impl Model<char> {
+    pub fn print(&self,) {
+        println!("{}{}", termion::clear::All, self.wavefunction);
+    }
+}
+
 impl<T: Hashable + Copy> Model<T> {
-    pub fn new(wavefunction: Wavefunction<T>, compatibilities: CompatibilityMap<T>) -> Model<T> {
+    pub fn new(seed: u64, wavefunction: Wavefunction<T>, compatibilities: CompatibilityMap<T>) -> Model<T> {
         Model {
             size: wavefunction.size,
             wavefunction,
             stack: Stack::new(),
-            rng: Box::new(rand::thread_rng()),
+            rng: SmallRng::seed_from_u64(seed),
             compatibilities,
         }
     }
@@ -305,10 +372,6 @@ impl<T: Hashable + Copy> Model<T> {
     }
 
     pub fn iterate(&mut self) -> bool {
-        // for point in self.wavefunction.coefficients.iter() {
-        //     println!("{:?}", point)
-        // }
-
         if self.wavefunction.is_fully_collapsed() {
             return false;
         }
@@ -317,10 +380,6 @@ impl<T: Hashable + Copy> Model<T> {
         self.wavefunction.collapse(coords, &mut self.rng);
         self.propagate(coords);
         true
-    }
-
-    pub fn print(&self) {
-        // println!("{}", self.wavefunction);
     }
 
     fn propagate(&mut self, coords: UVec2) {
@@ -367,7 +426,7 @@ impl<T: Hashable + Copy> Model<T> {
                     continue;
                 }
 
-                let entropy = self.wavefunction.shannon_entropy(coords);
+                let entropy = self.wavefunction.entropy_table.entropies[[coords.0, coords.1]];
                 let entropy_plus_noise = entropy - self.rng.gen::<f64>();
                 if entropy_plus_noise < min_entropy {
                     min_entropy = entropy_plus_noise;

@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::def::valid_dirs;
-use crate::def::CompatibilityMap;
-use crate::def::CompatibleTile;
-use crate::def::UVec2;
-use crate::def::WeightTable;
+use crate::wfc::valid_dirs;
+use crate::wfc::CompatibilityMap;
+use crate::wfc::CompatibleTile;
+use crate::wfc::UVec2;
+use crate::wfc::WeightTable;
 use crate::Matrix;
 
 fn parse_matrix(

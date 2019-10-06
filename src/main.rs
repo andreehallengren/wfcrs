@@ -2,7 +2,6 @@ mod def;
 mod estm;
 
 use def::Model;
-use def::Oracle;
 use def::Wavefunction;
 
 use def::UVec2;
@@ -48,9 +47,8 @@ fn main() {
     let runs = 100;
     for _ in 0..runs {
         let (compats, weights) = estm::provide(&[INPUT_MATRIX_0]);//, INPUT_MATRIX_2]);
-        let oracle = Oracle::new(compats);
         let wavefunction = Wavefunction::new(output_size, weights);
-        let mut model = Model::new(wavefunction, oracle);
+        let mut model = Model::new(wavefunction, compats);
     
         let before = std::time::Instant::now();
         // model.run_with_callback(|model, iteration| {

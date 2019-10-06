@@ -43,12 +43,6 @@ pub struct WeightTable<T> {
 pub trait Hashable: Hash + Eq {}
 impl<T: Hash + Eq> Hashable for T {}
 
-impl WeightTable<char> {
-    pub fn print(&self) {
-        println!("{:?}", self.inner);
-    }
-}
-
 impl<T: Hashable + Copy> WeightTable<T> {
     pub fn new() -> WeightTable<T> {
         WeightTable {
@@ -86,24 +80,6 @@ impl<T: Hashable + Copy> WeightTable<T> {
 
 pub type CompatibilityMap<T> = HashMap<T, HashSet<CompatibleTile<T>>>;
 pub type CompatibleTile<T> = (T, Vec2);
-
-pub struct Oracle<T> {
-    compatibilites: CompatibilityMap<T>,
-}
-
-impl<T: Hashable> Oracle<T> {
-    pub fn new(compatibilites: CompatibilityMap<T>) -> Oracle<T> {
-        Oracle { compatibilites }
-    }
-
-    pub fn check(&self, tile: T, other_tile: T, direction: Vec2) -> bool {
-        if self.compatibilites.contains_key(&tile) {
-            let tiles = self.compatibilites.get(&tile).unwrap();
-            return tiles.contains(&(other_tile, direction));
-        }
-        false
-    }
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum WavepointState {
@@ -299,17 +275,17 @@ pub struct Model<T: Hashable> {
     wavefunction: Wavefunction<T>,
     stack: Stack<UVec2>,
     rng: Box<dyn RngCore>,
-    oracle: Oracle<T>,
+    compatibilities: CompatibilityMap<T>,
 }
 
 impl<T: Hashable + Copy> Model<T> {
-    pub fn new(wavefunction: Wavefunction<T>, oracle: Oracle<T>) -> Model<T> {
+    pub fn new(wavefunction: Wavefunction<T>, compatibilities: CompatibilityMap<T>) -> Model<T> {
         Model {
             size: wavefunction.size,
             wavefunction,
             stack: Stack::new(),
             rng: Box::new(rand::thread_rng()),
-            oracle,
+            compatibilities,
         }
     }
 
@@ -364,7 +340,7 @@ impl<T: Hashable + Copy> Model<T> {
                 for other_tile in self.wavefunction.possible_tiles(other_coords) {
                     let other_tile_is_possible =
                         current_possible_tiles.iter().any(|current_tile| {
-                            self.oracle.check(*current_tile, *other_tile, direction)
+                            self.check_compatibility(*current_tile, *other_tile, direction)
                         });
 
                     if !other_tile_is_possible {
@@ -401,6 +377,14 @@ impl<T: Hashable + Copy> Model<T> {
         }
 
         min_entropy_coords.unwrap()
+    }
+
+    pub fn check_compatibility(&self, tile: T, other_tile: T, direction: Vec2) -> bool {
+        if self.compatibilities.contains_key(&tile) {
+            let tiles = self.compatibilities.get(&tile).unwrap();
+            return tiles.contains(&(other_tile, direction));
+        }
+        false
     }
 }
 

@@ -1,60 +1,68 @@
-use rand::prelude::*;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
-mod wfc;
-mod estm;
+use petgraph::graph::NodeIndex;
+use petgraph::graph::UnGraph;
 
-use wfc::UVec2;
-use wfc::Model;
-use wfc::Wavefunction;
+mod graph;
+mod grid;
+mod util;
 
-const MATRIX_WIDTH: usize = 4;
-const MATRIX_HEIGHT: usize = 7;
+use graph::*;
 
-type Matrix = [[char; MATRIX_WIDTH]; MATRIX_HEIGHT];
+struct HashOracle<T>(HashMap<T, HashSet<T>>);
 
-const INPUT_MATRIX_1: Matrix = [
-    ['L', 'L', 'L', 'L'],
-    ['L', 'L', 'L', 'L'],
-    ['L', 'L', 'L', 'L'],
-    ['L', 'C', 'C', 'L'],
-    ['C', 'S', 'S', 'C'],
-    ['S', 'S', 'S', 'S'],
-    ['S', 'S', 'S', 'S'],
-];
+impl<T: std::hash::Hash + std::cmp::Eq> Oracle<T> for HashOracle<T> {
+    fn is_compatible(&self, a: &T, b: &T) -> bool {
+        if let Some(counters) = self.0.get(a) {
+            if counters.contains(b) {
+                return true;
+            }
+        }
+        if let Some(counters) = self.0.get(b) {
+            if counters.contains(a) {
+                return true;
+            }
+        }
+        false
+    }
+}
 
-const INPUT_MATRIX_2: Matrix = [
-    ['S', 'S', 'S', 'S'],
-    ['S', 'S', 'S', 'S'],
-    ['S', 'S', 'S', 'S'],
-    ['S', 'S', 'S', 'S'],
-    ['S', 'S', 'S', 'S'],
-    ['S', 'S', 'S', 'S'],
-    ['S', 'S', 'S', 'S'],
-];
+struct GridPrinter(usize, usize);
+
+impl Print<char> for GridPrinter {
+    fn print(&self, graph: &UnGraph<Wavepoint<char>, ()>, index: NodeIndex) {
+        if index.index() != 0 && index.index() % self.0 == 0 {
+            println!();
+        }
+
+        match graph[index].get_value() {
+            Some(character) => {
+                print!("{}", character);
+            }
+            None => {
+                print!("~");
+            }
+        }
+    }
+}
 
 fn main() {
-    let output_size = UVec2(25, 25);
+    let graph = grid::make_grid(5, 5, || Wavepoint::new(vec!['A', 'B', 'C']));
 
-    let runs = 1;
-    for _ in 0..runs {
-        let (compats, weights) = estm::provide(&[INPUT_MATRIX_1, INPUT_MATRIX_2]);
-        let wavefunction = Wavefunction::new(output_size, weights);
+    let mut compatibilities = HashMap::new();
+    let entry = compatibilities.entry('A').or_insert(HashSet::new());
+    entry.insert('A');
+    entry.insert('B');
+    entry.insert('C');
 
-        let seed = rand::thread_rng().gen::<u64>();
-        let mut model = Model::new(134, wavefunction, compats);
-    
-        let before = std::time::Instant::now();
-        // model.run_with_callback(|model, iteration| {
-        //     model.print();
-        //     std::thread::sleep(std::time::Duration::from_millis(500));
-        // });
-        model.run();
-        let after = std::time::Instant::now();
-        let duration = after.duration_since(before);
-        // print!("{}", termion::clear::All); 
-        println!("result:");
-        model.print();
-        println!("seed: {}", seed);
-        println!("generated in {}ms", duration.as_millis());
-    }
+    let entry = compatibilities.entry('B').or_insert(HashSet::new());
+    entry.insert('B');
+    let entry = compatibilities.entry('C').or_insert(HashSet::new());
+    entry.insert('C');
+
+    let oracle = HashOracle(compatibilities);
+    let printer = GridPrinter(5, 5);
+    let mut model = Model::new(graph, 1, oracle, printer);
+    model.run();
 }
